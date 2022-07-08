@@ -1,0 +1,68 @@
+;*******************************************************************************
+;
+;   MSP430F2001系统时序：输出定时信号以触发其他微控制器中的中断事件。管理系统的定时和同步。
+;             -----------------
+;         /|\|              XIN|-
+;          | |                 | 32kHz
+;          --|RST          XOUT|-
+;            |                 |
+;            |         P1.2/TA1|--> 0.125s (4)     1/8s
+;Output mode. Modes 2, 3, 6, and 7 are not useful for TAxCCR0 because EQUx = EQU0.
+;000b = OUT bit value
+;001b = Set
+;010b = Toggle/reset
+;011b = Set/reset
+;100b = Toggle
+;101b = Reset
+;110b = Toggle/set
+;111b = Reset/set
+
+;MOV #TD2CMB+TDCLKM_0, &TDxCTL1 ; Combine TDxCCR1&TDxCCR2,
+                                ; External Clock
+;MOV #OUTMOD_7, &TDxCCTL2       ; TDxCCR2 Reset/Set
+;MOV 0x80, &TDxCCR0             ; PWM Period TDxCCR0 128
+;MOV 0x28, &TDxCCR1             ; TDxCCR1 is 40, Set
+;MOV 0x50, &TDxCCR2             ; TDxCCR2 is 80, Reset
+;MOV #TDSSEL_1+MC_1, &TDxCTL0   ; ACLK, Up Mode
+;BIS #CPUOFF,SR                 ; Enter LPM0
+
+// Configure TD0 and its PWM outputs
+TD0CTL0 |= TDCLR;              // Clear timer counter master+slave
+TD0CCR0 = 200;                 // TD0CCR0
+TD0CCR1 = 40;                  // 20% dutycycle
+TD0CCTL1 |= OUTMOD_7;          // TD0CCR1, Reset/Set
+TD0CCR2 = 80;                  // 40% dutycycle
+TD0CCTL2 |= OUTMOD_7;          // TD0CCR2, Reset/Set
+// Configure TD1 PWM outputs
+TD1CCR0 = 200;                 // TD1CCR0
+TD1CCR1 = 120;                 // 60% dutycycle
+TD1CCTL1 |= OUTMOD_7;          // TD1CCR1, Reset/Set
+TD1CCR2 = 160;                 // 80% dutycycle
+TD1CCTL2 |= OUTMOD_7;          // TD1CCR2, Reset/Set
+// Start timers and select Up-mode
+TD0CTL0 |= MC_1 + TDCLR;       // up-mode, start timer
+
+;*******************************************************************************
+#include  "msp430x20x1.h"
+;-------------------------------------------------------------------------------
+            ORG     0F800h                  ; Program Reset
+;-------------------------------------------------------------------------------
+RESET       mov.w   #0280h,SP               ; Initialize stackpointer  初始化堆栈指针
+StopWDT     mov.w   #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT
+SetupP1     bis.b   #004h,&P1DIR            ; P1.2 output        0000 0100
+            bis.b   #004h,&P1SEL            ; P1.2 TA1 option    0000 0100  bis.b：设置目的操作数的各位
+SetupC0     mov.w   #61000,&CCR0            ; PWM Period/2, was 4096hz   CCR0 counts to 61000.   397312     Timer_A捕获/比较寄存器0  
+SetupC1     mov.w   #OUTMOD_6,&CCTL1        ; CCR1 toggle/set  CCR1切换/设置：当定时器计数到 TAxCCRn 值时，输出切换。当定时器计数到 TAxCCR0 值时设置。  CCTL1Timer_A捕捉/比较控制1  参考手册例子：BIS #OUTMOD_7,&TA0CCTL1 ; Set output mode=7
+            mov.w   #30500,&CCR1            ; CCR1 PWM Duty Cycle占空比50%, was 2048hz    197888    CCR1 counts to 30500.  	Timer_A捕获/比较寄存器1
+SetupTA     mov.w   #TASSEL_2+MC_3,&TACTL   ; ACLK _1 before, up mode  定时器_A控制寄存器:时钟源选择10b=SMCLK，模式控制11b=Up/down mode: the timer counts up to TACCR0 then down to 0000h.
+			
+Mainloop    bis.w   #CPUOFF,SR              ; CPU off    SR状态寄存器   bis.w：设置目的操作数的各位       为啥没写&
+            ;bis.w  #LPM3,SR                ; Enter LPM3 mode   进入低功耗模式3
+            nop                             ; For debugger 
+            
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+            ORG     0FFFEh                  ; MSP430 RESET Vector。伪操作指令，规定程序的起始地址。
+            DW      RESET                   ; DW:伪操作指令,定义字(2字节).DW定义16位数据，每个数据需两个单元存放，高8位数据字节存入高地址字节中，低位放低位。
+            END
